@@ -10,15 +10,23 @@ const heebo = Heebo({
 
 export const metadata: Metadata = {
   title: {
-    default: "BarberAI - ניהול תורים חכם למספרות",
-    template: "%s | BarberAI",
+    default: "Dobby - פקיד קבלה חכם לשירותי שטח",
+    template: "%s | Dobby",
   },
-  description: "מערכת ניהול תורים חכמה למספרות עם בינה מלאכותית, החלפת תורים ושליחת הודעות בוואטסאפ",
+  description:
+    "עוזר וואטסאפ חכם לעצמאים בשירותי שטח — אוסף פרטי קריאה ומעדכן את בעל העסק",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "BarberAI",
+    title: "Dobby",
+  },
+  icons: {
+    apple: "/icons/apple-touch-icon.png",
+    icon: [
+      { url: "/icons/icon-192x192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512x512.png", sizes: "512x512", type: "image/png" },
+    ],
   },
 };
 
@@ -26,7 +34,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  themeColor: "#7C3AED",
+  viewportFit: "cover",
+  themeColor: "#1c1917",
 };
 
 export default function RootLayout({

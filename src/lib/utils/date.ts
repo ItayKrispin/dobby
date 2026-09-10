@@ -23,6 +23,38 @@ const HEBREW_DAY_NAMES = [
 
 export const ISRAEL_TIMEZONE = "Asia/Jerusalem";
 
+/** Format an instant as YYYY-MM-DD in Asia/Jerusalem. */
+export function ymdInIsrael(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: ISRAEL_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+/** Format an instant as HH:mm in Asia/Jerusalem. */
+export function hmInIsrael(date: Date) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: ISRAEL_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+/** Local Israel fields for AI tools (avoids UTC misreads like 07:00 instead of 10:00). */
+export function israelLocalFromIso(iso: string) {
+  const date = new Date(iso);
+  const ymd = ymdInIsrael(date);
+  const hm = hmInIsrael(date);
+  return {
+    date: ymd,
+    time: hm,
+    local: `${ymd} ${hm}`,
+  };
+}
+
 export function getHebrewDayName(date: Date): string {
   return HEBREW_DAY_NAMES[date.getDay()];
 }

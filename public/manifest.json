@@ -1,23 +1,33 @@
 {
-  "name": "BarberAI - ניהול תורים חכם",
-  "short_name": "BarberAI",
-  "description": "מערכת ניהול תורים חכמה למספרות",
-  "start_url": "/",
+  "name": "Dobby Owner",
+  "short_name": "Dobby",
+  "description": "תיבת שיחות וקריאות — ניהול AI ווואטסאפ",
+  "start_url": "/dashboard",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#7C3AED",
+  "orientation": "portrait",
+  "background_color": "#f5f1ea",
+  "theme_color": "#1c1917",
   "dir": "rtl",
   "lang": "he",
   "icons": [
     {
       "src": "/icons/icon-192x192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "/icons/icon-512x512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
