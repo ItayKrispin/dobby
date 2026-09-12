@@ -1,10 +1,12 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
+  DEFAULT_HOURS_INTERVAL,
   formatIntervalsSummary,
   HEBREW_WEEKDAYS,
   type BusinessProfile,
   type DayHours,
   type HoursInterval,
+  type HoursPolicy,
   type PhotoPolicy,
   type WeekdayHours,
 } from "@/lib/business-shared";
@@ -16,14 +18,16 @@ export {
   type BusinessProfile,
   type DayHours,
   type HoursInterval,
+  type HoursPolicy,
   type PhotoPolicy,
   type WeekdayHours,
 } from "@/lib/business-shared";
 
 const HM_RE = /^\d{2}:\d{2}$/;
 const PHOTO_POLICIES = new Set<PhotoPolicy>(["always", "if_helpful", "never"]);
+const HOURS_POLICIES = new Set<HoursPolicy>(["hard", "flexible"]);
 
-const DEFAULT_INTERVAL: HoursInterval = { open: "09:00", close: "20:00" };
+const DEFAULT_INTERVAL: HoursInterval = { ...DEFAULT_HOURS_INTERVAL };
 
 const DEFAULT_HOURS: WeekdayHours[] = [
   { dayOfWeek: 0, isOpen: true, intervals: [{ ...DEFAULT_INTERVAL }] },
@@ -36,7 +40,7 @@ const DEFAULT_HOURS: WeekdayHours[] = [
 ];
 
 const DEFAULT_PERSONA =
-  "friendly and professional field-service receptionist named Dobby";
+  "friendly and professional field-service receptionist";
 
 function parseHm(value: string) {
   const [h, m] = value.split(":").map(Number);
@@ -151,7 +155,22 @@ function normalizePhotoPolicy(value: unknown): PhotoPolicy {
   if (typeof value === "string" && PHOTO_POLICIES.has(value as PhotoPolicy)) {
     return value as PhotoPolicy;
   }
-  return "if_helpful";
+  return "always";
+}
+
+function normalizeOwnerName(value: unknown): string {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed || trimmed.toLowerCase() === "dobby") {
+    return "";
+  }
+  return trimmed;
+}
+
+function normalizeHoursPolicy(value: unknown): HoursPolicy {
+  if (typeof value === "string" && HOURS_POLICIES.has(value as HoursPolicy)) {
+    return value as HoursPolicy;
+  }
+  return "flexible";
 }
 
 /** Day-of-week for a civil YYYY-MM-DD date (0=Sunday … 6=Saturday). */
@@ -180,7 +199,7 @@ export async function getBusinessProfile(): Promise<BusinessProfile> {
   const envNotify = process.env.OWNER_NOTIFY_PHONE?.trim() || "";
 
   return {
-    name: profile?.name?.trim() || "Dobby",
+    name: normalizeOwnerName(profile?.name),
     trade: profile?.trade?.trim() || "plumber",
     persona: profile?.persona?.trim() || DEFAULT_PERSONA,
     serviceArea: profile?.service_area?.trim() || "",
@@ -189,6 +208,8 @@ export async function getBusinessProfile(): Promise<BusinessProfile> {
     emergencyPolicy:
       profile?.emergency_policy?.trim() ||
       "נזילה חזקה, הצפה, או סכנה מיידית = חירום",
+    assistantIntro: profile?.assistant_intro?.trim() || "",
+    hoursPolicy: normalizeHoursPolicy(profile?.hours_policy),
     hours,
     hoursSummary: formatHoursSummary(hours),
   };
@@ -218,6 +239,8 @@ export async function updateBusinessProfile(input: {
   ownerNotifyPhone?: string;
   photoPolicy?: PhotoPolicy;
   emergencyPolicy?: string;
+  assistantIntro?: string;
+  hoursPolicy?: HoursPolicy;
   hours?: WeekdayHours[];
 }): Promise<BusinessProfile> {
   const supabase = createAdminClient();
@@ -229,17 +252,17 @@ export async function updateBusinessProfile(input: {
     input.serviceArea !== undefined ||
     input.ownerNotifyPhone !== undefined ||
     input.photoPolicy !== undefined ||
-    input.emergencyPolicy !== undefined;
+    input.emergencyPolicy !== undefined ||
+    input.assistantIntro !== undefined ||
+    input.hoursPolicy !== undefined;
 
   if (hasProfilePatch) {
-    const patch: Record<string, string | PhotoPolicy> = {
+    const patch: Record<string, string | PhotoPolicy | HoursPolicy> = {
       updated_at: new Date().toISOString(),
     };
 
     if (input.name !== undefined) {
-      const name = input.name.trim();
-      if (!name) throw new Error("name is required");
-      patch.name = name;
+      patch.name = input.name.trim();
     }
     if (input.trade !== undefined) {
       const trade = input.trade.trim();
@@ -263,6 +286,15 @@ export async function updateBusinessProfile(input: {
     }
     if (input.emergencyPolicy !== undefined) {
       patch.emergency_policy = input.emergencyPolicy.trim();
+    }
+    if (input.assistantIntro !== undefined) {
+      patch.assistant_intro = input.assistantIntro.trim();
+    }
+    if (input.hoursPolicy !== undefined) {
+      if (!HOURS_POLICIES.has(input.hoursPolicy)) {
+        throw new Error("hoursPolicy must be hard or flexible");
+      }
+      patch.hours_policy = input.hoursPolicy;
     }
 
     const { error } = await supabase

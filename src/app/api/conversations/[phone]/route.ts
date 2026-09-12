@@ -23,13 +23,16 @@ export async function GET(_request: NextRequest, { params }: Params) {
     }
 
     const { createAdminClient } = await import("@/lib/supabase/admin");
+    const { getSignedStorageUrl } = await import("@/lib/storage-signed-url");
     const supabase = createAdminClient();
     const mediaWithUrls = await Promise.all(
       (thread.media ?? []).map(async (item) => {
-        const { data } = await supabase.storage
-          .from("job-photos")
-          .createSignedUrl(item.storage_path, 60 * 60);
-        return { ...item, url: data?.signedUrl ?? null };
+        const url = await getSignedStorageUrl(
+          supabase,
+          "job-photos",
+          item.storage_path,
+        );
+        return { ...item, url };
       }),
     );
 
@@ -51,11 +54,27 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const { phone: rawPhone } = await params;
     const phone = decodeURIComponent(rawPhone);
-    const body = (await request.json()) as { aiPaused?: boolean };
+    const body = (await request.json()) as {
+      aiPaused?: boolean;
+      pinned?: boolean;
+    };
+
+    if (typeof body.pinned === "boolean") {
+      const { setConversationPinned } = await import("@/lib/conversations");
+      const result = await setConversationPinned(phone, body.pinned);
+      if (!result.ok) {
+        const status = result.code === "PIN_LIMIT" ? 409 : 400;
+        return NextResponse.json(
+          { ok: false, error: result.error, code: result.code },
+          { status },
+        );
+      }
+      return NextResponse.json({ ok: true, conversation: result.conversation });
+    }
 
     if (typeof body.aiPaused !== "boolean") {
       return NextResponse.json(
-        { ok: false, error: "aiPaused boolean is required" },
+        { ok: false, error: "aiPaused or pinned is required" },
         { status: 400 },
       );
     }

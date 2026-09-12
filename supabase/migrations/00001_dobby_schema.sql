@@ -1,4 +1,6 @@
--- Dobby schema (fresh project — do not replay old BarberAI migrations)
+-- Dobby schema (fresh empty project only)
+-- If your project already has BarberAI tables (ERROR: relation "conversations" already exists),
+-- run 00002_upgrade_barber_to_dobby.sql instead of this file.
 
 CREATE TABLE conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -106,20 +108,16 @@ CREATE UNIQUE INDEX services_active_name_uidx
   ON services (name)
   WHERE is_active = true;
 
-INSERT INTO services (name, duration_minutes, price, sort_order) VALUES
-  ('נזילה', 60, 0, 0),
-  ('סתימה', 60, 0, 1),
-  ('התקנת ברז', 90, 0, 2),
-  ('אחר', 60, 0, 3);
+-- Job types start empty; owners add their own from the dashboard
 
 CREATE TABLE business_profile (
   id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
-  name TEXT NOT NULL DEFAULT 'Dobby',
+  name TEXT NOT NULL DEFAULT '',
   trade TEXT NOT NULL DEFAULT 'plumber',
   persona TEXT NOT NULL DEFAULT 'friendly and professional field-service receptionist named Dobby',
   service_area TEXT NOT NULL DEFAULT '',
   owner_notify_phone TEXT NOT NULL DEFAULT '',
-  photo_policy TEXT NOT NULL DEFAULT 'if_helpful'
+  photo_policy TEXT NOT NULL DEFAULT 'always'
     CHECK (photo_policy IN ('always', 'if_helpful', 'never')),
   emergency_policy TEXT NOT NULL DEFAULT 'נזילה חזקה, הצפה, או סכנה מיידית = חירום',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -131,17 +129,17 @@ ON CONFLICT (id) DO NOTHING;
 CREATE TABLE business_hours (
   day_of_week SMALLINT PRIMARY KEY CHECK (day_of_week BETWEEN 0 AND 6),
   is_open BOOLEAN NOT NULL DEFAULT true,
-  intervals JSONB NOT NULL DEFAULT '[{"open":"09:00","close":"20:00"}]'::jsonb
+  intervals JSONB NOT NULL DEFAULT '[{"open":"08:00","close":"17:00"}]'::jsonb
 );
 
 INSERT INTO business_hours (day_of_week, is_open, intervals) VALUES
-  (0, true, '[{"open":"09:00","close":"20:00"}]'::jsonb),
-  (1, true, '[{"open":"09:00","close":"20:00"}]'::jsonb),
-  (2, true, '[{"open":"09:00","close":"20:00"}]'::jsonb),
-  (3, true, '[{"open":"09:00","close":"20:00"}]'::jsonb),
-  (4, true, '[{"open":"09:00","close":"20:00"}]'::jsonb),
-  (5, true, '[{"open":"09:00","close":"20:00"}]'::jsonb),
-  (6, false, '[{"open":"09:00","close":"20:00"}]'::jsonb)
+  (0, true, '[{"open":"08:00","close":"17:00"}]'::jsonb),
+  (1, true, '[{"open":"08:00","close":"17:00"}]'::jsonb),
+  (2, true, '[{"open":"08:00","close":"17:00"}]'::jsonb),
+  (3, true, '[{"open":"08:00","close":"17:00"}]'::jsonb),
+  (4, true, '[{"open":"08:00","close":"17:00"}]'::jsonb),
+  (5, true, '[{"open":"08:00","close":"17:00"}]'::jsonb),
+  (6, false, '[{"open":"08:00","close":"17:00"}]'::jsonb)
 ON CONFLICT (day_of_week) DO NOTHING;
 
 -- Private bucket for WhatsApp job photos

@@ -27,25 +27,25 @@ export function CollapsibleSection({
   children,
 }: CollapsibleSectionProps) {
   return (
-    <section className="overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_oklch(0.84_0.015_75)]">
+    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <div className="flex items-center gap-1 border-b border-border/70 px-3 py-2">
         <button
           type="button"
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-right active:scale-[0.99]"
+          className="flex min-h-14 min-w-0 flex-1 items-center gap-2 text-right"
           aria-expanded={open}
           onClick={() => onOpenChange(!open)}
         >
           <ChevronDown
             className={cn(
-              "size-4 shrink-0 text-muted-foreground transition-transform duration-200",
+              "size-5 shrink-0 text-muted-foreground transition-transform duration-200",
               open ? "rotate-0" : "-rotate-90",
             )}
             aria-hidden
           />
           <span className="min-w-0 flex-1">
             <span className="block text-base font-semibold">{title}</span>
-            {!open && summary ? (
-              <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+            {summary ? (
+              <span className="mt-0.5 block truncate text-sm text-muted-foreground">
                 {summary}
               </span>
             ) : null}

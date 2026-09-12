@@ -1,9 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ConfirmDialog } from "@/components/dashboard/confirm-dialog";
+import { EmptyState } from "@/components/dashboard/empty-state";
+import { RowActions } from "@/components/dashboard/row-actions";
 import { apiFetch } from "@/lib/api-fetch";
+import {
+  SERVICE_SUGGESTIONS_BY_TRADE,
+  serviceNamePlaceholder,
+} from "@/lib/business-shared";
+import { fetchServices, queryKeys } from "@/lib/dashboard-query";
 
 export type ServiceItem = {
   id: string;
@@ -27,49 +37,65 @@ const emptyCreate = {
 };
 
 type ServicesManagerProps = {
+  trade?: string;
   onError?: (message: string | null) => void;
 };
 
-export function ServicesManager({ onError }: ServicesManagerProps) {
-  const [services, setServices] = useState<ServiceItem[]>([]);
+export function ServicesManager({
+  trade = "plumber",
+  onError,
+}: ServicesManagerProps) {
+  const queryClient = useQueryClient();
   const [localError, setLocalError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState(emptyCreate);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ServiceItem | null>(null);
+
+  const {
+    data: services = [],
+    isLoading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.services,
+    queryFn: async () => (await fetchServices()) as ServiceItem[],
+  });
+
+  const loading = isLoading && services.length === 0;
+  const suggestions =
+    SERVICE_SUGGESTIONS_BY_TRADE[trade] ?? SERVICE_SUGGESTIONS_BY_TRADE.custom;
+  const unusedSuggestions = suggestions.filter(
+    (name) =>
+      !services.some((service) => service.name === name && service.isActive),
+  );
 
   function reportError(message: string | null) {
     setLocalError(message);
     onError?.(message);
   }
 
+  const queryLoadError = queryError
+    ? queryError instanceof Error
+      ? queryError.message
+      : "שגיאה בטעינת שירותים"
+    : null;
+  const displayError = localError ?? queryLoadError;
+
   async function refresh() {
     try {
-      const response = await apiFetch("/api/services");
-      const json = await response.json();
-      if (!json.ok) {
-        throw new Error(json.error || "Failed to load services");
-      }
-      setServices((json.services ?? []) as ServiceItem[]);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.services });
       reportError(null);
     } catch (err) {
       reportError(err instanceof Error ? err.message : "שגיאה בטעינת שירותים");
-    } finally {
-      setLoading(false);
     }
   }
 
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function createService() {
-    const name = createForm.name.trim();
-    const durationMinutes = Number(createForm.durationMinutes);
-    const price = Number(createForm.price);
+  async function createService(overrideName?: string) {
+    const name = (overrideName ?? createForm.name).trim();
+    const durationMinutes = Number(createForm.durationMinutes || "60");
+    const price = Number(createForm.price || "0");
 
     if (!name) {
       reportError("יש להזין שם שירות");
@@ -184,12 +210,7 @@ export function ServicesManager({ onError }: ServicesManagerProps) {
     }
   }
 
-  async function removeService(id: string, name: string) {
-    const confirmed = window.confirm(
-      `למחוק את השירות "${name}"?\nפעולה זו אינה ניתנת לביטול.`,
-    );
-    if (!confirmed) return;
-
+  async function removeService(id: string) {
     setBusyId(id);
     try {
       const response = await apiFetch(`/api/services/${encodeURIComponent(id)}`, {
@@ -200,6 +221,7 @@ export function ServicesManager({ onError }: ServicesManagerProps) {
         throw new Error(json.error || "Failed to delete service");
       }
       if (editingId === id) cancelEdit();
+      setPendingDelete(null);
       await refresh();
     } catch (err) {
       reportError(err instanceof Error ? err.message : "שגיאה במחיקה");
@@ -211,26 +233,25 @@ export function ServicesManager({ onError }: ServicesManagerProps) {
   return (
     <div className="space-y-4">
       {loading && (
-        <p className="text-sm text-muted-foreground">טוען שירותים...</p>
+        <p className="text-base text-muted-foreground">טוען שירותים...</p>
       )}
-      {localError && !onError && (
-        <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          {localError}
+      {displayError && !onError && (
+        <p className="rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-base text-destructive">
+          {displayError}
         </p>
       )}
 
-      <section className="space-y-3 rounded-xl border border-border bg-card p-4 shadow-[0_1px_0_oklch(0.84_0.015_75)]">
-        <h3 className="text-sm font-semibold">הוסף שירות</h3>
+      <section className="space-y-3">
+        <h3 className="text-base font-semibold">הוסף סוג קריאה</h3>
         <div className="grid gap-2 sm:grid-cols-[1fr_6rem_6rem_auto]">
-          <input
+          <Input
             value={createForm.name}
             onChange={(event) =>
               setCreateForm((prev) => ({ ...prev, name: event.target.value }))
             }
-            placeholder="שם (למשל תספורת גבר)"
-            className="min-h-11 rounded-xl border border-input bg-background px-3 text-base outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/40 sm:text-sm"
+            placeholder={serviceNamePlaceholder(trade)}
           />
-          <input
+          <Input
             type="number"
             min={1}
             step={1}
@@ -243,9 +264,8 @@ export function ServicesManager({ onError }: ServicesManagerProps) {
             }
             placeholder="דקות"
             aria-label="משך בדקות"
-            className="min-h-11 rounded-xl border border-input bg-background px-3 text-base outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/40 sm:text-sm"
           />
-          <input
+          <Input
             type="number"
             min={0}
             step={1}
@@ -255,22 +275,37 @@ export function ServicesManager({ onError }: ServicesManagerProps) {
             }
             placeholder="מחיר"
             aria-label="מחיר בשקלים"
-            className="min-h-11 rounded-xl border border-input bg-background px-3 text-base outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/40 sm:text-sm"
           />
-          <Button
-            className="min-h-11 px-5 active:scale-[0.98]"
-            disabled={creating}
-            onClick={createService}
-          >
+          <Button disabled={creating} onClick={() => createService()}>
             {creating ? "מוסיף..." : "הוסף"}
           </Button>
         </div>
+        {unusedSuggestions.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-sm text-muted-foreground">הצעות להוספה:</p>
+            <div className="flex flex-wrap gap-2">
+              {unusedSuggestions.map((suggestion) => (
+                <Button
+                  key={suggestion}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={creating}
+                  onClick={() => createService(suggestion)}
+                >
+                  + {suggestion}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
-      {!loading && services.length === 0 && !localError && (
-        <p className="rounded-xl border border-dashed border-border bg-card/60 p-8 text-center text-muted-foreground">
-          עדיין אין סוגי קריאות. הוסף סוג למעלה.
-        </p>
+      {!loading && services.length === 0 && !displayError && (
+        <EmptyState
+          title="עדיין אין סוגי קריאות"
+          description="הוסיפו סוג למעלה או בחרו מההצעות."
+        />
       )}
 
       <ul className="space-y-3">
@@ -280,77 +315,58 @@ export function ServicesManager({ onError }: ServicesManagerProps) {
           return (
             <li
               key={service.id}
-              className={`rounded-xl border border-border bg-card p-4 shadow-[0_1px_0_oklch(0.84_0.015_75)] ${
+              className={`rounded-2xl border border-border bg-background/70 p-4 ${
                 service.isActive ? "" : "opacity-70"
               }`}
             >
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="mb-1 flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-semibold">{service.name}</p>
+                    <p className="text-base font-semibold">{service.name}</p>
                     <Badge variant={service.isActive ? "secondary" : "outline"}>
                       {service.isActive ? "פעיל" : "מושבת"}
                     </Badge>
                   </div>
                   {!isEditing && (
-                    <p className="mt-0.5 text-sm text-muted-foreground">
+                    <p className="mt-0.5 text-base text-muted-foreground">
                       {service.durationMinutes} דק׳ · ₪{service.price}
                     </p>
                   )}
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {!isEditing && (
-                    <Button
-                      variant="outline"
-                      className="min-h-11 px-4 active:scale-[0.98]"
-                      disabled={busy}
-                      onClick={() => startEdit(service)}
-                    >
-                      ערוך
-                    </Button>
-                  )}
-                  {service.isActive ? (
-                    <Button
-                      variant="outline"
-                      className="min-h-11 px-4 active:scale-[0.98]"
-                      disabled={busy}
-                      onClick={() => setActive(service.id, false)}
-                    >
-                      {busy ? "..." : "השבת"}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      className="min-h-11 px-4 active:scale-[0.98]"
-                      disabled={busy}
-                      onClick={() => setActive(service.id, true)}
-                    >
-                      {busy ? "..." : "הפעל"}
-                    </Button>
-                  )}
-                  <Button
-                    variant="destructive"
-                    className="min-h-11 px-4 active:scale-[0.98]"
-                    disabled={busy}
-                    onClick={() => removeService(service.id, service.name)}
-                  >
-                    {busy ? "..." : "מחק"}
-                  </Button>
-                </div>
+                <RowActions
+                  items={[
+                    {
+                      label: "ערוך",
+                      onSelect: () => startEdit(service),
+                      disabled: busy,
+                    },
+                    {
+                      label: service.isActive ? "השבת" : "הפעל",
+                      onSelect: () => setActive(service.id, !service.isActive),
+                      disabled: busy,
+                    },
+                    {
+                      label: "מחק",
+                      destructive: true,
+                      separatorBefore: true,
+                      onSelect: () => setPendingDelete(service),
+                      disabled: busy,
+                    },
+                  ]}
+                />
               </div>
 
               {isEditing && editDraft && (
-                <div className="grid gap-2 sm:grid-cols-[1fr_6rem_6rem]">
-                  <input
+                <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_6rem_6rem]">
+                  <Input
                     value={editDraft.name}
                     onChange={(event) =>
                       setEditDraft((prev) =>
                         prev ? { ...prev, name: event.target.value } : prev,
                       )
                     }
-                    className="min-h-11 rounded-xl border border-input bg-background px-3 text-base outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/40 sm:text-sm"
                   />
-                  <input
+                  <Input
                     type="number"
                     min={1}
                     step={1}
@@ -363,9 +379,8 @@ export function ServicesManager({ onError }: ServicesManagerProps) {
                       )
                     }
                     aria-label="משך בדקות"
-                    className="min-h-11 rounded-xl border border-input bg-background px-3 text-base outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/40 sm:text-sm"
                   />
-                  <input
+                  <Input
                     type="number"
                     min={0}
                     step={1}
@@ -376,11 +391,10 @@ export function ServicesManager({ onError }: ServicesManagerProps) {
                       )
                     }
                     aria-label="מחיר בשקלים"
-                    className="min-h-11 rounded-xl border border-input bg-background px-3 text-base outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/40 sm:text-sm"
                   />
                   <div className="flex gap-2 sm:col-span-3">
                     <Button
-                      className="min-h-11 flex-1 active:scale-[0.98]"
+                      className="flex-1"
                       disabled={busy}
                       onClick={() => saveEdit(service.id)}
                     >
@@ -388,7 +402,7 @@ export function ServicesManager({ onError }: ServicesManagerProps) {
                     </Button>
                     <Button
                       variant="outline"
-                      className="min-h-11 flex-1 active:scale-[0.98]"
+                      className="flex-1"
                       disabled={busy}
                       onClick={cancelEdit}
                     >
@@ -401,6 +415,26 @@ export function ServicesManager({ onError }: ServicesManagerProps) {
           );
         })}
       </ul>
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title="מחיקת סוג קריאה"
+        description={
+          pendingDelete
+            ? `למחוק את "${pendingDelete.name}"?\nפעולה זו אינה ניתנת לביטול.`
+            : ""
+        }
+        confirmLabel="מחק"
+        destructive
+        busy={Boolean(pendingDelete && busyId === pendingDelete.id)}
+        onConfirm={async () => {
+          if (!pendingDelete) return;
+          await removeService(pendingDelete.id);
+        }}
+      />
     </div>
   );
 }

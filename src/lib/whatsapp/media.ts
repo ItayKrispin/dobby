@@ -4,6 +4,7 @@ import {
   incrementDraftPhotoCount,
   updateJobDraft,
 } from "@/lib/conversations";
+import { findLatestOpenJobId } from "@/lib/jobs";
 import { downloadWhatsAppMedia } from "@/lib/whatsapp/client";
 
 function extensionForMime(mimeType: string) {
@@ -35,9 +36,11 @@ export async function storeWhatsAppImage(options: {
     throw new Error(`Failed to upload photo: ${uploadError.message}`);
   }
 
+  const openJobId = await findLatestOpenJobId(conversation.id);
+
   const { error: insertError } = await supabase.from("job_media").insert({
     conversation_id: conversation.id,
-    job_id: null,
+    job_id: openJobId,
     storage_path: path,
     mime_type: mimeType,
     whatsapp_media_id: options.mediaId,
@@ -47,12 +50,16 @@ export async function storeWhatsAppImage(options: {
     throw new Error(`Failed to save media row: ${insertError.message}`);
   }
 
-  await incrementDraftPhotoCount(options.phone);
+  // Only bump draft photo count when photos are still for the in-progress intake.
+  if (!openJobId) {
+    await incrementDraftPhotoCount(options.phone);
+  }
 
   return {
     path,
     mimeType,
     caption: options.caption?.trim() || null,
+    jobId: openJobId,
   };
 }
 

@@ -4,7 +4,7 @@ export type ChatRole = "user" | "assistant";
 export type MessageRole = ChatRole | "owner";
 
 export type ChatMessage = {
-  role: ChatRole;
+  role: MessageRole;
   content: string;
 };
 
@@ -20,6 +20,16 @@ export type JobDraft = {
 };
 
 const MAX_HISTORY_MESSAGES = 20;
+
+function isMissingSchemaError(error: { message?: string; code?: string } | null) {
+  if (!error) return false;
+  const message = error.message ?? "";
+  return (
+    error.code === "PGRST204" ||
+    error.code === "42P01" ||
+    /pinned_at|owner_notifications|job_reminders|schema cache/i.test(message)
+  );
+}
 
 function previewOf(content: string) {
   const trimmed = content.trim().replace(/\s+/g, " ");
@@ -71,6 +81,22 @@ export async function getOrCreateConversation(phone: string) {
     .select("*")
     .single();
 
+  // Parallel chat loaders can race on first message — unique phone is fine.
+  if (insertError?.code === "23505") {
+    const { data: raced, error: retryError } = await supabase
+      .from("conversations")
+      .select("*")
+      .eq("phone", phone)
+      .single();
+
+    if (retryError || !raced) {
+      throw new Error(
+        `Failed to load conversation after race: ${retryError?.message ?? "unknown error"}`,
+      );
+    }
+    return raced;
+  }
+
   if (insertError || !created) {
     throw new Error(
       `Failed to create conversation: ${insertError?.message ?? "unknown error"}`,
@@ -89,12 +115,14 @@ export async function setAiPaused(phone: string, paused: boolean) {
   const conversation = await getOrCreateConversation(phone);
   const supabase = createAdminClient();
 
+  // Keep paused_at on resume so the UI can mark the last handoff boundary.
+  const patch = paused
+    ? { ai_paused: true, paused_at: new Date().toISOString() }
+    : { ai_paused: false };
+
   const { data, error } = await supabase
     .from("conversations")
-    .update({
-      ai_paused: paused,
-      paused_at: paused ? new Date().toISOString() : null,
-    })
+    .update(patch)
     .eq("id", conversation.id)
     .select("*")
     .single();
@@ -146,7 +174,7 @@ export async function loadRecentHistory(phone: string): Promise<ChatMessage[]> {
     .from("messages")
     .select("role, content")
     .eq("conversation_id", conversation.id)
-    .in("role", ["user", "assistant"])
+    .in("role", ["user", "assistant", "owner"])
     .order("created_at", { ascending: false })
     .limit(MAX_HISTORY_MESSAGES);
 
@@ -157,7 +185,7 @@ export async function loadRecentHistory(phone: string): Promise<ChatMessage[]> {
   return (data ?? [])
     .reverse()
     .map((row) => ({
-      role: row.role as ChatRole,
+      role: row.role as MessageRole,
       content: row.content,
     }));
 }
@@ -177,13 +205,85 @@ export async function listConversations() {
   const { data, error } = await supabase
     .from("conversations")
     .select("*")
+    .order("pinned_at", { ascending: false, nullsFirst: false })
     .order("last_message_at", { ascending: false });
 
   if (error) {
+    // Fallback while migration 00007 is not yet applied.
+    if (/pinned_at/i.test(error.message) || isMissingSchemaError(error)) {
+      const fallback = await supabase
+        .from("conversations")
+        .select("*")
+        .order("last_message_at", { ascending: false });
+      if (fallback.error) {
+        throw new Error(`Failed to list conversations: ${fallback.error.message}`);
+      }
+      return fallback.data ?? [];
+    }
     throw new Error(`Failed to list conversations: ${error.message}`);
   }
 
   return data ?? [];
+}
+
+const MAX_PINNED_CONVERSATIONS = 3;
+
+export async function setConversationPinned(phone: string, pinned: boolean) {
+  const conversation = await getOrCreateConversation(phone);
+  const supabase = createAdminClient();
+
+  if (pinned) {
+    if (conversation.pinned_at) {
+      return { ok: true as const, conversation };
+    }
+
+    const { data: rows, error: countError } = await supabase
+      .from("conversations")
+      .select("*");
+
+    if (countError) {
+      throw new Error(`Failed to count pinned conversations: ${countError.message}`);
+    }
+
+    const pinnedCount = (rows ?? []).filter((row) =>
+      Boolean((row as { pinned_at?: string | null }).pinned_at),
+    ).length;
+    if (pinnedCount >= MAX_PINNED_CONVERSATIONS) {
+      return {
+        ok: false as const,
+        error: "אפשר לנעוץ עד 3 שיחות",
+        code: "PIN_LIMIT" as const,
+      };
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("conversations")
+    .update({ pinned_at: pinned ? new Date().toISOString() : null })
+    .eq("id", conversation.id)
+    .select("*")
+    .single();
+
+  if (error || !data) {
+    if (isMissingSchemaError(error) || /pinned_at|PGRST204|schema cache/i.test(error?.message ?? error?.code ?? "")) {
+      return {
+        ok: false as const,
+        error: "יש להריץ את מיגרציה 00007_owner_ux_upgrades.sql",
+        code: "MIGRATION_REQUIRED" as const,
+      };
+    }
+    // PostgREST sometimes returns empty message for unknown columns.
+    if (error && !data) {
+      return {
+        ok: false as const,
+        error: "יש להריץ את מיגרציה 00007_owner_ux_upgrades.sql",
+        code: "MIGRATION_REQUIRED" as const,
+      };
+    }
+    throw new Error(`Failed to update pin state: ${error?.message}`);
+  }
+
+  return { ok: true as const, conversation: data };
 }
 
 export async function getCustomerName(phone: string): Promise<string | null> {
@@ -460,6 +560,7 @@ export async function deleteConversation(phone: string) {
     return { ok: false as const, notFound: true };
   }
 
+  // Keep job requests; FK should SET NULL conversation_id (not cascade).
   const { error: deleteError } = await supabase
     .from("conversations")
     .delete()

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getBusinessProfile,
   updateBusinessProfile,
+  type HoursPolicy,
   type PhotoPolicy,
   type WeekdayHours,
 } from "@/lib/business";
@@ -28,7 +29,8 @@ export async function PATCH(request: NextRequest) {
       serviceArea?: string;
       ownerNotifyPhone?: string;
       photoPolicy?: PhotoPolicy;
-      emergencyPolicy?: string;
+      assistantIntro?: string;
+      hoursPolicy?: HoursPolicy;
       hours?: WeekdayHours[];
     };
 
@@ -39,7 +41,8 @@ export async function PATCH(request: NextRequest) {
       body.serviceArea === undefined &&
       body.ownerNotifyPhone === undefined &&
       body.photoPolicy === undefined &&
-      body.emergencyPolicy === undefined &&
+      body.assistantIntro === undefined &&
+      body.hoursPolicy === undefined &&
       body.hours === undefined
     ) {
       return NextResponse.json(
@@ -55,7 +58,8 @@ export async function PATCH(request: NextRequest) {
       serviceArea: body.serviceArea,
       ownerNotifyPhone: body.ownerNotifyPhone,
       photoPolicy: body.photoPolicy,
-      emergencyPolicy: body.emergencyPolicy,
+      assistantIntro: body.assistantIntro,
+      hoursPolicy: body.hoursPolicy,
       hours: body.hours,
     });
 

@@ -1,13 +1,13 @@
 {
   "name": "Dobby Owner",
   "short_name": "Dobby",
-  "description": "תיבת שיחות וקריאות — ניהול AI ווואטסאפ",
-  "start_url": "/dashboard",
+  "description": "תיבת שיחות ובקשות עבודה — ניהול AI ווואטסאפ",
+  "start_url": "/dashboard/jobs",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f5f1ea",
-  "theme_color": "#1c1917",
+  "background_color": "#f7f4ee",
+  "theme_color": "#f7f4ee",
   "dir": "rtl",
   "lang": "he",
   "icons": [

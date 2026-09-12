@@ -31,6 +31,7 @@ export async function getBusyIntervals(date: string) {
 export async function createCalendarEvent(input: {
   summary: string;
   description?: string;
+  location?: string;
   start: Date;
   end: Date;
 }) {
@@ -42,6 +43,7 @@ export async function createCalendarEvent(input: {
     requestBody: {
       summary: input.summary,
       description: input.description,
+      location: input.location,
       start: {
         dateTime: input.start.toISOString(),
         timeZone: TIME_ZONE,

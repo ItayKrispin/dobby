@@ -11,9 +11,24 @@ export type JobStatus =
   | "ready"
   | "notified"
   | "owner_handling"
-  | "closed";
+  | "completed"
+  | "cancelled";
 
 export type PhotoPolicy = "always" | "if_helpful" | "never";
+
+export type OwnerNotificationType =
+  | "owner_handoff"
+  | "new_job"
+  | "job_reminder"
+  | "paused_message";
+
+export const TERMINAL_JOB_STATUSES: JobStatus[] = ["completed", "cancelled"];
+
+export function isTerminalJobStatus(status: JobStatus): boolean {
+  return status === "completed" || status === "cancelled";
+}
+
+export type ReminderOffsetMinutes = 60 | 180 | 1440;
 
 type ConversationRow = {
   id: string;
@@ -23,6 +38,7 @@ type ConversationRow = {
   created_at: string;
   ai_paused: boolean;
   paused_at: string | null;
+  pinned_at: string | null;
   customer_name: string | null;
   owner_notes: string | null;
   draft_problem: string | null;
@@ -33,6 +49,27 @@ type ConversationRow = {
   draft_location_lat: number | null;
   draft_location_lng: number | null;
   draft_photo_count: number;
+};
+
+type OwnerNotificationRow = {
+  id: string;
+  type: OwnerNotificationType;
+  title: string;
+  body: string;
+  phone: string | null;
+  conversation_id: string | null;
+  job_id: string | null;
+  read_at: string | null;
+  created_at: string;
+};
+
+type JobReminderRow = {
+  id: string;
+  job_id: string;
+  offset_minutes: ReminderOffsetMinutes;
+  fire_at: string;
+  sent_at: string | null;
+  created_at: string;
 };
 
 type OwnerAssistantMessageRow = {
@@ -75,6 +112,14 @@ type JobRow = {
   customer_availability: string | null;
   status: JobStatus;
   notified_at: string | null;
+  in_diary: boolean;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  google_event_id: string | null;
+  diary_added_at: string | null;
+  payment_amount: number | null;
+  payment_includes_vat: boolean | null;
+  outcome_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -82,7 +127,7 @@ type JobRow = {
 type JobMediaRow = {
   id: string;
   job_id: string | null;
-  conversation_id: string;
+  conversation_id: string | null;
   storage_path: string;
   mime_type: string | null;
   whatsapp_media_id: string | null;
@@ -109,6 +154,8 @@ type BusinessProfileRow = {
   owner_notify_phone: string;
   photo_policy: PhotoPolicy;
   emergency_policy: string;
+  assistant_intro: string;
+  hours_policy: "hard" | "flexible";
   updated_at: string;
 };
 
@@ -131,6 +178,7 @@ export type Database = {
           created_at?: string;
           ai_paused?: boolean;
           paused_at?: string | null;
+          pinned_at?: string | null;
           customer_name?: string | null;
           owner_notes?: string | null;
           draft_problem?: string | null;
@@ -143,6 +191,35 @@ export type Database = {
           draft_photo_count?: number;
         };
         Update: Partial<ConversationRow>;
+        Relationships: [];
+      };
+      owner_notifications: {
+        Row: OwnerNotificationRow;
+        Insert: {
+          id?: string;
+          type: OwnerNotificationType;
+          title: string;
+          body?: string;
+          phone?: string | null;
+          conversation_id?: string | null;
+          job_id?: string | null;
+          read_at?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<OwnerNotificationRow>;
+        Relationships: [];
+      };
+      job_reminders: {
+        Row: JobReminderRow;
+        Insert: {
+          id?: string;
+          job_id: string;
+          offset_minutes: ReminderOffsetMinutes;
+          fire_at: string;
+          sent_at?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<JobReminderRow>;
         Relationships: [];
       };
       owner_assistant_messages: {
@@ -199,6 +276,14 @@ export type Database = {
           customer_availability?: string | null;
           status?: JobStatus;
           notified_at?: string | null;
+          in_diary?: boolean;
+          scheduled_start?: string | null;
+          scheduled_end?: string | null;
+          google_event_id?: string | null;
+          diary_added_at?: string | null;
+          payment_amount?: number | null;
+          payment_includes_vat?: boolean | null;
+          outcome_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -210,7 +295,7 @@ export type Database = {
         Insert: {
           id?: string;
           job_id?: string | null;
-          conversation_id: string;
+          conversation_id?: string | null;
           storage_path: string;
           mime_type?: string | null;
           whatsapp_media_id?: string | null;
@@ -245,6 +330,8 @@ export type Database = {
           owner_notify_phone?: string;
           photo_policy?: PhotoPolicy;
           emergency_policy?: string;
+          assistant_intro?: string;
+          hours_policy?: "hard" | "flexible";
           updated_at?: string;
         };
         Update: Partial<BusinessProfileRow>;
@@ -258,6 +345,24 @@ export type Database = {
           intervals?: Json;
         };
         Update: Partial<BusinessHoursRow>;
+        Relationships: [];
+      };
+      processed_whatsapp_messages: {
+        Row: {
+          wa_message_id: string;
+          phone: string | null;
+          created_at: string;
+        };
+        Insert: {
+          wa_message_id: string;
+          phone?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          wa_message_id?: string;
+          phone?: string | null;
+          created_at?: string;
+        };
         Relationships: [];
       };
     };

@@ -21,30 +21,53 @@
   --color-destructive: var(--destructive);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-chat-owner: var(--chat-owner);
+  --color-chat-owner-foreground: var(--chat-owner-foreground);
+  --color-chat-bubble: var(--chat-bubble);
+  --color-chat-bubble-foreground: var(--chat-bubble-foreground);
+  --color-chat-label-customer: var(--chat-label-customer);
+  --color-chat-label-assistant: var(--chat-label-assistant);
+  --color-attention: var(--attention);
+  --color-attention-foreground: var(--attention-foreground);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.2);
+  --radius-2xl: calc(var(--radius) * 1.4);
 }
 
 :root {
-  /* Ink warm: warm paper + charcoal ink */
-  --background: oklch(0.965 0.012 85);
-  --foreground: oklch(0.18 0.015 55);
-  --card: oklch(0.99 0.006 85);
-  --card-foreground: oklch(0.18 0.015 55);
-  --primary: oklch(0.22 0.02 55);
-  --primary-foreground: oklch(0.98 0.005 85);
-  --secondary: oklch(0.93 0.012 85);
-  --secondary-foreground: oklch(0.22 0.02 55);
-  --muted: oklch(0.93 0.01 85);
-  --muted-foreground: oklch(0.45 0.02 55);
-  --accent: oklch(0.91 0.015 85);
-  --accent-foreground: oklch(0.2 0.02 55);
-  --destructive: oklch(0.5 0.18 25);
-  --border: oklch(0.84 0.015 75);
-  --input: oklch(0.88 0.012 75);
-  --ring: oklch(0.35 0.02 55);
-  --radius: 0.75rem;
+  /* Warm welcome: honey cream + terracotta accent */
+  --background: oklch(0.97 0.02 75);
+  --foreground: oklch(0.28 0.04 45);
+  --card: oklch(0.995 0.01 75);
+  --card-foreground: oklch(0.28 0.04 45);
+  --popover: oklch(0.995 0.01 75);
+  --popover-foreground: oklch(0.28 0.04 45);
+  --primary: oklch(0.55 0.14 40);
+  --primary-foreground: oklch(0.99 0.01 75);
+  --secondary: oklch(0.94 0.025 75);
+  --secondary-foreground: oklch(0.32 0.05 45);
+  --muted: oklch(0.94 0.02 70);
+  --muted-foreground: oklch(0.5 0.03 50);
+  --accent: oklch(0.93 0.04 55);
+  --accent-foreground: oklch(0.4 0.1 40);
+  --destructive: oklch(0.55 0.2 25);
+  --border: oklch(0.88 0.025 70);
+  --input: oklch(0.9 0.02 70);
+  --ring: oklch(0.55 0.14 40);
+  /* Shared bubbles: soft cream card. Owner: warm honey amber. */
+  --chat-bubble: oklch(0.995 0.01 75);
+  --chat-bubble-foreground: oklch(0.28 0.04 45);
+  --chat-label-customer: oklch(0.52 0.14 40);
+  --chat-label-assistant: oklch(0.48 0.09 230);
+  --chat-owner: oklch(0.94 0.08 70);
+  --chat-owner-foreground: oklch(0.3 0.05 45);
+  --attention: oklch(0.82 0.12 85);
+  --attention-foreground: oklch(0.38 0.08 55);
+  --radius: 1rem;
 }
 
 @layer base {
@@ -61,6 +84,8 @@
     margin: 0;
     min-height: 100dvh;
     font-family: var(--font-heebo), system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
     -webkit-tap-highlight-color: transparent;
   }
 }

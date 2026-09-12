@@ -1,4 +1,5 @@
 import {
+  FunctionCallingMode,
   FunctionDeclaration,
   FunctionDeclarationsTool,
   GoogleGenerativeAI,
@@ -9,14 +10,18 @@ import { getBusinessProfile } from "@/lib/business";
 import {
   getCustomerName,
   getJobDraft,
+  getOrCreateConversation,
   loadRecentHistory,
-  saveExchange,
+  saveMessage,
+  setAiPaused,
   setCustomerName,
   updateJobDraft,
   type ChatMessage,
   type JobDraft,
+  type MessageRole,
 } from "@/lib/conversations";
-import { submitJob } from "@/lib/jobs";
+import { isPacketComplete, submitJob } from "@/lib/jobs";
+import { createOwnerHandoffNotification } from "@/lib/notifications";
 import { listActiveServices, type Service } from "@/lib/services";
 
 const MAX_TOOL_ITERATIONS = 5;
@@ -43,17 +48,13 @@ function buildTools(services: Service[]): FunctionDeclarationsTool[] {
   const updateJobDraftTool: FunctionDeclaration = {
     name: "update_job_draft",
     description:
-      "Save or merge in-progress job intake fields as soon as the customer states or corrects them. Partial updates are allowed.",
+      "Save or merge in-progress job intake fields as soon as the customer states or corrects them. Partial updates are allowed. Extract ALL fields present in a single message (address AND availability AND problem if present).",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
         problem: {
           type: SchemaType.STRING,
           description: "What happened / what they need (free text)",
-        },
-        is_emergency: {
-          type: SchemaType.BOOLEAN,
-          description: "Whether this is an emergency",
         },
         address: {
           type: SchemaType.STRING,
@@ -75,7 +76,17 @@ function buildTools(services: Service[]): FunctionDeclarationsTool[] {
   const submitJobTool: FunctionDeclaration = {
     name: "submit_job",
     description:
-      "Submit the completed intake packet to the owner. For emergencies, call as soon as problem+address are known. Otherwise require problem, emergency yes/no, address, and availability.",
+      "Submit the completed intake packet to the owner. Require problem, address, and availability (and a photo when the business always wants photos).",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {},
+    },
+  };
+
+  const requestOwnerTool: FunctionDeclaration = {
+    name: "request_owner",
+    description:
+      "Call when the customer asks to speak directly with the owner / a human / בעל העסק. Pauses the AI and alerts the owner. Do not keep collecting fields after this.",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {},
@@ -88,31 +99,102 @@ function buildTools(services: Service[]): FunctionDeclarationsTool[] {
         saveCustomerNameTool,
         updateJobDraftTool,
         submitJobTool,
+        requestOwnerTool,
       ],
     },
   ];
 }
 
+function buildExtractTools(services: Service[]): FunctionDeclarationsTool[] {
+  const names = services.map((service) => service.name).join(", ");
+  return [
+    {
+      functionDeclarations: [
+        {
+          name: "save_customer_name",
+          description: "Save customer name if stated in the message.",
+          parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+              name: { type: SchemaType.STRING, description: "Customer's name" },
+            },
+            required: ["name"],
+          },
+        },
+        {
+          name: "update_job_draft",
+          description:
+            "Extract every intake field present in the customer message. One message may contain address, availability, and problem together — fill all of them.",
+          parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+              problem: { type: SchemaType.STRING },
+              address: { type: SchemaType.STRING },
+              availability: { type: SchemaType.STRING },
+              job_type: {
+                type: SchemaType.STRING,
+                description: `Optional job type from: ${names}`,
+              },
+            },
+            required: [],
+          },
+        },
+      ],
+    },
+  ];
+}
+
+function speakerLabel(role: MessageRole) {
+  if (role === "owner") return "בעל העסק";
+  if (role === "assistant") return "עוזר";
+  return "לקוח";
+}
+
+/** Strip history speaker tags the model sometimes echoes into customer-facing text. */
+function sanitizeAssistantReply(text: string) {
+  return text
+    .replace(/^\s*\[(?:עוזר|לקוח|בעל העסק)\]\s*/gm, "")
+    .trim();
+}
+
+function toGeminiRole(role: MessageRole): "user" | "model" {
+  return role === "assistant" ? "model" : "user";
+}
+
+/**
+ * Label speakers and merge consecutive same Gemini-role turns so:
+ * - owner messages are visible to the model
+ * - consecutive customer bursts (photo + address + time) are not dropped
+ * - Gemini history alternates user/model correctly
+ */
 function toGeminiHistory(history: ChatMessage[]) {
   let start = 0;
-  while (start < history.length && history[start].role !== "user") {
+  while (start < history.length && history[start].role === "assistant") {
     start += 1;
   }
 
   const trimmed = history.slice(start);
-  const pairs: ChatMessage[] = [];
-  for (let i = 0; i + 1 < trimmed.length; i += 1) {
-    const user = trimmed[i];
-    const assistant = trimmed[i + 1];
-    if (user.role === "user" && assistant.role === "assistant") {
-      pairs.push(user, assistant);
-      i += 1;
+  const merged: { role: "user" | "model"; text: string }[] = [];
+
+  for (const message of trimmed) {
+    const geminiRole = toGeminiRole(message.role);
+    const labeled = `[${speakerLabel(message.role)}] ${message.content}`;
+    const last = merged[merged.length - 1];
+    if (last && last.role === geminiRole) {
+      last.text = `${last.text}\n${labeled}`;
+    } else {
+      merged.push({ role: geminiRole, text: labeled });
     }
   }
 
-  return pairs.map((message) => ({
-    role: message.role === "assistant" ? "model" : "user",
-    parts: [{ text: message.content }],
+  // History must start with user for Gemini chat sessions.
+  while (merged.length > 0 && merged[0].role !== "user") {
+    merged.shift();
+  }
+
+  return merged.map((entry) => ({
+    role: entry.role,
+    parts: [{ text: entry.text }],
   }));
 }
 
@@ -125,10 +207,16 @@ function getModel(
     trade: string;
     persona: string;
     hoursSummary: string;
+    hoursPolicy: "hard" | "flexible";
     serviceArea: string;
     photoPolicy: "always" | "if_helpful" | "never";
-    emergencyPolicy: string;
+    assistantIntro: string;
   },
+  options: {
+    aiPaused?: boolean;
+    hasOwnerMessages?: boolean;
+    pausedAt?: string | null;
+  } = {},
 ) {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   if (!apiKey) {
@@ -143,6 +231,9 @@ function getModel(
       draft,
       services,
       business,
+      aiPaused: options.aiPaused,
+      hasOwnerMessages: options.hasOwnerMessages,
+      pausedAt: options.pausedAt,
     }),
     tools: buildTools(services),
   });
@@ -151,14 +242,6 @@ function getModel(
 function stringArg(args: Record<string, unknown>, key: string) {
   const value = args[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function boolArg(args: Record<string, unknown>, key: string) {
-  const value = args[key];
-  if (typeof value === "boolean") return value;
-  if (value === "true") return true;
-  if (value === "false") return false;
-  return undefined;
 }
 
 async function runTool(
@@ -183,7 +266,6 @@ async function runTool(
     try {
       const next = await updateJobDraft(phone, {
         problem: stringArg(args, "problem"),
-        isEmergency: boolArg(args, "is_emergency"),
         address: stringArg(args, "address"),
         availability: stringArg(args, "availability"),
         jobType: stringArg(args, "job_type"),
@@ -220,7 +302,139 @@ async function runTool(
     return { result: submitted, draft };
   }
 
+  if (name === "request_owner") {
+    try {
+      const conversation = await getOrCreateConversation(phone);
+      const alreadyPaused = Boolean(conversation.ai_paused);
+      if (!alreadyPaused) {
+        await setAiPaused(phone, true);
+      }
+      const customerName = conversation.customer_name;
+      let notified = false;
+      try {
+        const handoff = await createOwnerHandoffNotification({
+          phone,
+          conversationId: conversation.id,
+          customerName,
+        });
+        notified = handoff.created;
+      } catch (notifyError) {
+        console.error("Owner handoff notification failed:", notifyError);
+      }
+      return {
+        result: {
+          ok: true,
+          paused: true,
+          already_paused: alreadyPaused,
+          notified,
+        },
+        draft,
+      };
+    } catch (error) {
+      return {
+        result: {
+          ok: false,
+          error:
+            error instanceof Error ? error.message : "Failed to request owner",
+        },
+        draft,
+      };
+    }
+  }
+
   return { result: { ok: false, error: `Unknown tool: ${name}` }, draft };
+}
+
+/**
+ * Dedicated extract pass so typed address/availability are saved even if the
+ * conversational reply turn skips tool calls.
+ */
+async function extractFieldsFromMessage(
+  phone: string,
+  userMessage: string,
+  draft: JobDraft,
+  customerName: string | null,
+  services: Service[],
+): Promise<{ draft: JobDraft; customerName: string | null }> {
+  // Photo / location / voice stubs only update photo count (already done); nothing to extract
+  // unless the note includes a caption / accompanying text after the stub prefix.
+  const trimmed = userMessage.trim();
+  const photoOnly = /^\[הלקוח שלח(?: \d+)? תמונות?\]$/.test(trimmed);
+  if (
+    photoOnly ||
+    trimmed.startsWith("[הלקוח שלח מיקום]") ||
+    trimmed === "[הלקוח שלח הודעת קול]"
+  ) {
+    return { draft, customerName };
+  }
+
+  // Image album with caption: strip the stub so extract sees the real fields.
+  const photoWithCaption = trimmed.match(
+    /^\[הלקוח שלח(?: \d+)? תמונות?\]\s+([\s\S]+)$/,
+  );
+  const extractSource = photoWithCaption?.[1]?.trim() || trimmed;
+  if (!extractSource) {
+    return { draft, customerName };
+  }
+
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
+  if (!apiKey) return { draft, customerName };
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: "gemini-3.1-flash-lite",
+      systemInstruction: `You extract field-service intake data from a single Hebrew customer WhatsApp message.
+Call update_job_draft and/or save_customer_name for EVERY fact present.
+One message may include name, problem, address, and availability together — extract all of them.
+Examples:
+- "רחוב החשמל 3" → address
+- "אפשר בראשון בבוקר" / "ראשון בבוקר" → availability
+- "צחי" alone or "שמי צחי" → name
+Do not invent fields. If nothing to extract, respond with an empty text reply and call no tools.
+Current known draft (do not clear existing values): problem=${draft.problem ?? "חסר"}, address=${draft.address ?? "חסר"}, availability=${draft.availability ?? "חסר"}, name=${customerName ?? "חסר"}.`,
+      tools: buildExtractTools(services),
+    });
+
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: extractSource }] }],
+      toolConfig: {
+        functionCallingConfig: {
+          mode: FunctionCallingMode.AUTO,
+          allowedFunctionNames: ["update_job_draft", "save_customer_name"],
+        },
+      },
+    });
+    const calls = result.response.functionCalls() ?? [];
+    let nextDraft = draft;
+    let nextName = customerName;
+
+    for (const call of calls) {
+      const { result: toolResult, draft: updated } = await runTool(
+        phone,
+        call.name,
+        (call.args ?? {}) as Record<string, unknown>,
+        nextDraft,
+      );
+      nextDraft = updated;
+      if (
+        call.name === "save_customer_name" &&
+        toolResult &&
+        typeof toolResult === "object" &&
+        "ok" in toolResult &&
+        toolResult.ok &&
+        "customer_name" in toolResult &&
+        typeof toolResult.customer_name === "string"
+      ) {
+        nextName = toolResult.customer_name;
+      }
+    }
+
+    return { draft: nextDraft, customerName: nextName };
+  } catch (error) {
+    console.error("Extract pass failed:", error);
+    return { draft, customerName };
+  }
 }
 
 export async function chat(
@@ -228,31 +442,81 @@ export async function chat(
   userMessage: string,
   options: { skipSaveUser?: boolean } = {},
 ): Promise<string> {
-  const [history, customerName, jobDraft, services, business] = await Promise.all([
-    loadRecentHistory(phone),
-    getCustomerName(phone),
-    getJobDraft(phone),
-    listActiveServices(),
-    getBusinessProfile(),
-  ]);
+  // Persist the inbound message first so the dashboard shows it even if Gemini fails.
+  if (!options.skipSaveUser) {
+    await saveMessage(phone, "user", userMessage);
+  }
 
-  const model = getModel(customerName, jobDraft, services, {
-    name: business.name,
-    trade: business.trade,
-    persona: business.persona,
-    hoursSummary: business.hoursSummary,
-    serviceArea: business.serviceArea,
-    photoPolicy: business.photoPolicy,
-    emergencyPolicy: business.emergencyPolicy,
-  });
+  const [history, customerNameInitial, jobDraftInitial, services, business, conversation] =
+    await Promise.all([
+      loadRecentHistory(phone),
+      getCustomerName(phone),
+      getJobDraft(phone),
+      listActiveServices(),
+      getBusinessProfile(),
+      getOrCreateConversation(phone),
+    ]);
+
+  // Extract fields from this message before building the reply prompt.
+  const extracted = await extractFieldsFromMessage(
+    phone,
+    userMessage,
+    jobDraftInitial,
+    customerNameInitial,
+    services,
+  );
+  let knownName = extracted.customerName;
+  let draft = extracted.draft;
+
+  // If packet is complete after extract, submit and confirm — don't re-ask.
+  if (isPacketComplete(draft, business.photoPolicy)) {
+    const submitted = await submitJob(phone);
+    if (submitted.ok) {
+      const reply =
+        "תודה! קיבלתי את כל הפרטים והעברתי לבעל העסק. הוא יחזור אליך בהקדם.";
+      await saveMessage(phone, "assistant", reply);
+      return reply;
+    }
+  }
+
+  // History already includes the user message we just saved — drop the trailing
+  // duplicate before sending to Gemini (sendMessage adds the current turn).
+  const historyForModel =
+    history.length > 0 &&
+    history[history.length - 1]?.role === "user" &&
+    history[history.length - 1]?.content === userMessage
+      ? history.slice(0, -1)
+      : history;
+
+  const hasOwnerMessages = historyForModel.some((m) => m.role === "owner");
+
+  const model = getModel(
+    knownName,
+    draft,
+    services,
+    {
+      name: business.name,
+      trade: business.trade,
+      persona: business.persona,
+      hoursSummary: business.hoursSummary,
+      hoursPolicy: business.hoursPolicy,
+      serviceArea: business.serviceArea,
+      photoPolicy: business.photoPolicy,
+      assistantIntro: business.assistantIntro,
+    },
+    {
+      aiPaused: Boolean(conversation.ai_paused),
+      hasOwnerMessages,
+      pausedAt: conversation.paused_at ?? null,
+    },
+  );
 
   const chatSession = model.startChat({
-    history: toGeminiHistory(history),
+    history: toGeminiHistory(historyForModel),
   });
 
-  let result = await chatSession.sendMessage(userMessage);
-  let knownName = customerName;
-  let draft = jobDraft;
+  const labeledCurrent = `[לקוח] ${userMessage}`;
+  let result = await chatSession.sendMessage(labeledCurrent);
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i += 1) {
     const functionCalls = result.response.functionCalls();
@@ -293,16 +557,35 @@ export async function chat(
 
   void knownName;
 
-  const reply = result.response.text().trim();
-  if (!reply) {
-    throw new Error("Empty model response");
+  let reply = "";
+  try {
+    reply = result.response.text().trim();
+  } catch (error) {
+    console.error("Gemini text() failed:", error);
   }
 
-  if (options.skipSaveUser) {
-    const { saveMessage } = await import("@/lib/conversations");
-    await saveMessage(phone, "assistant", reply);
-  } else {
-    await saveExchange(phone, userMessage, reply);
+  // After tool-only turns Gemini sometimes returns no text; nudge once for a reply.
+  if (!reply) {
+    try {
+      result = await chatSession.sendMessage(
+        "עכשיו ענה ללקוח בעברית בקצרה על סמך הכלים שכבר רצו. בלי לקרוא לכלים שוב אם אין צורך.",
+      );
+      reply = result.response.text().trim();
+    } catch (error) {
+      console.error("Gemini fallback nudge failed:", error);
+    }
   }
+
+  if (!reply) {
+    console.error("Empty model response; using fallback reply");
+    reply = "סליחה, לא הצלחתי לענות כרגע. אפשר לשלוח שוב במשפט קצר?";
+  }
+
+  reply = sanitizeAssistantReply(reply);
+  if (!reply) {
+    reply = "סליחה, לא הצלחתי לענות כרגע. אפשר לשלוח שוב במשפט קצר?";
+  }
+
+  await saveMessage(phone, "assistant", reply);
   return reply;
 }

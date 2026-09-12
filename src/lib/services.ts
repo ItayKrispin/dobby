@@ -9,20 +9,6 @@ export type Service = {
   sortOrder: number;
 };
 
-/** Fallback when DB has no active job types. */
-export const DEFAULT_SERVICES: Omit<Service, "id">[] = [
-  { name: "נזילה", durationMinutes: 60, price: 0, isActive: true, sortOrder: 0 },
-  { name: "סתימה", durationMinutes: 60, price: 0, isActive: true, sortOrder: 1 },
-  {
-    name: "התקנת ברז",
-    durationMinutes: 90,
-    price: 0,
-    isActive: true,
-    sortOrder: 2,
-  },
-  { name: "אחר", durationMinutes: 60, price: 0, isActive: true, sortOrder: 3 },
-];
-
 type ServiceRow = {
   id: string;
   name: string;
@@ -41,13 +27,6 @@ function mapRow(row: ServiceRow): Service {
     isActive: row.is_active,
     sortOrder: row.sort_order,
   };
-}
-
-function fallbackServices(): Service[] {
-  return DEFAULT_SERVICES.map((service, index) => ({
-    ...service,
-    id: `fallback-${index}`,
-  }));
 }
 
 export async function listServices(options: { activeOnly?: boolean } = {}) {
@@ -70,37 +49,38 @@ export async function listServices(options: { activeOnly?: boolean } = {}) {
   return (data ?? []).map(mapRow);
 }
 
-/** Active job types for AI; falls back to defaults if none. */
+/** Active job types for AI. Empty until the owner adds them. */
 export async function listActiveServices(): Promise<Service[]> {
-  const services = await listServices({ activeOnly: true });
-  return services.length > 0 ? services : fallbackServices();
+  return listServices({ activeOnly: true });
 }
 
 export function resolveServiceFromList(
   services: Service[],
   serviceName?: string,
-): Service {
-  const list = services.length > 0 ? services : fallbackServices();
+): Service | null {
+  if (services.length === 0) {
+    return null;
+  }
   if (!serviceName?.trim()) {
-    return list[0];
+    return services[0];
   }
 
   const trimmed = serviceName.trim();
-  const exact = list.find((service) => service.name === trimmed);
+  const exact = services.find((service) => service.name === trimmed);
   if (exact) return exact;
 
-  // Prefer longer names first so "תספורת + זקן" wins over "תספורת".
-  const sorted = [...list].sort(
+  // Prefer longer names first so "נזילה + סתימה" wins over "נזילה".
+  const sorted = [...services].sort(
     (a, b) => b.name.length - a.name.length,
   );
   const fuzzy = sorted.find(
     (service) =>
       trimmed.includes(service.name) || service.name.includes(trimmed),
   );
-  return fuzzy ?? list[0];
+  return fuzzy ?? services[0];
 }
 
-export async function resolveService(serviceName?: string): Promise<Service> {
+export async function resolveService(serviceName?: string): Promise<Service | null> {
   const services = await listActiveServices();
   return resolveServiceFromList(services, serviceName);
 }

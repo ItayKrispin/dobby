@@ -14,6 +14,7 @@ export function middleware(request: NextRequest) {
     pathname.startsWith("/api/webhooks/") ||
     pathname.startsWith("/api/dev/") ||
     pathname.startsWith("/api/auth/login") ||
+    pathname.startsWith("/api/cron/") ||
     pathname.startsWith("/login") ||
     pathname === "/" ||
     pathname.startsWith("/icons") ||

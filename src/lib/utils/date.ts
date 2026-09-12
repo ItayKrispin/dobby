@@ -33,6 +33,22 @@ export function ymdInIsrael(date: Date) {
   }).format(date);
 }
 
+/** Start of the given Israel calendar day as a Date (midnight Asia/Jerusalem). */
+export function israelDayStart(ymd: string): Date {
+  // Prefer +03 then verify; Israel is +02 or +03 depending on DST.
+  for (const offset of ["+03:00", "+02:00"] as const) {
+    const candidate = new Date(`${ymd}T00:00:00${offset}`);
+    if (ymdInIsrael(candidate) === ymd && hmInIsrael(candidate) === "00:00") {
+      return candidate;
+    }
+  }
+  return new Date(`${ymd}T00:00:00+03:00`);
+}
+
+export function startOfTodayIsrael(): Date {
+  return israelDayStart(ymdInIsrael(new Date()));
+}
+
 /** Format an instant as HH:mm in Asia/Jerusalem. */
 export function hmInIsrael(date: Date) {
   return new Intl.DateTimeFormat("en-GB", {

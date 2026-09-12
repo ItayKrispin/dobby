@@ -32,6 +32,11 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Dev chat route error:", error);
-    return NextResponse.json({ ok: false, error: "Failed to process chat" }, { status: 500 });
+    const message =
+      error instanceof Error ? error.message : "Failed to process chat";
+    return NextResponse.json(
+      { ok: false, error: message },
+      { status: 500 },
+    );
   }
 }

@@ -6,33 +6,41 @@ export async function GET() {
   try {
     const conversations = await listConversations();
     const supabase = createAdminClient();
+    const conversationIds = conversations.map((conversation) => conversation.id);
 
-    const withBadges = await Promise.all(
-      conversations.map(async (conversation) => {
-        const { data: jobs } = await supabase
-          .from("jobs")
-          .select("id, status, is_emergency")
-          .eq("conversation_id", conversation.id)
-          .neq("status", "closed");
+    const openJobsByConversation = new Map<string, number>();
+    if (conversationIds.length > 0) {
+      const { data: jobs } = await supabase
+        .from("jobs")
+        .select("id, conversation_id")
+        .in("conversation_id", conversationIds)
+        .in("status", ["intake", "ready", "notified"]);
 
-        const openJobs = jobs ?? [];
-        const hasEmergency = openJobs.some((job) => job.is_emergency);
-        const hasIntakeDraft = Boolean(
-          conversation.draft_problem ||
-            conversation.draft_address ||
-            conversation.draft_availability ||
-            conversation.draft_is_emergency !== null,
+      for (const job of jobs ?? []) {
+        if (!job.conversation_id) continue;
+        openJobsByConversation.set(
+          job.conversation_id,
+          (openJobsByConversation.get(job.conversation_id) ?? 0) + 1,
         );
+      }
+    }
 
-        return {
-          ...conversation,
-          openJobCount: openJobs.length,
-          hasEmergency,
-          hasIntakeDraft,
-          aiPaused: Boolean(conversation.ai_paused),
-        };
-      }),
-    );
+    const withBadges = conversations.map((conversation) => {
+      const hasIntakeDraft = Boolean(
+        conversation.draft_problem ||
+          conversation.draft_address ||
+          conversation.draft_availability ||
+          (conversation.draft_photo_count ?? 0) > 0,
+      );
+
+      return {
+        ...conversation,
+        pinned_at: conversation.pinned_at ?? null,
+        openJobCount: openJobsByConversation.get(conversation.id) ?? 0,
+        hasIntakeDraft,
+        aiPaused: Boolean(conversation.ai_paused),
+      };
+    });
 
     return NextResponse.json({ ok: true, conversations: withBadges });
   } catch (error) {

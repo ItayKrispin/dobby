@@ -1,19 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { AvatarInitials } from "@/components/dashboard/avatar-initials";
+import { BackLink } from "@/components/dashboard/back-link";
+import { CallButton } from "@/components/dashboard/call-button";
+import { ConfirmDialog } from "@/components/dashboard/confirm-dialog";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { EmptyState } from "@/components/dashboard/empty-state";
+import { RowActions } from "@/components/dashboard/row-actions";
 import { apiFetch } from "@/lib/api-fetch";
-import { cn } from "@/lib/utils";
-
-type Contact = {
-  id: string;
-  phone: string;
-  customer_name: string | null;
-  last_message_at: string;
-  created_at: string;
-};
+import {
+  fetchContacts,
+  queryKeys,
+  type ContactItem,
+} from "@/lib/dashboard-query";
 
 function formatTime(iso: string) {
   try {
@@ -27,38 +32,50 @@ function formatTime(iso: string) {
 }
 
 export default function ContactsPage() {
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const [draftOverrides, setDraftOverrides] = useState<Record<string, string>>(
+    {},
+  );
+  const [actionError, setActionError] = useState<string | null>(null);
   const [savingPhone, setSavingPhone] = useState<string | null>(null);
   const [deletingPhone, setDeletingPhone] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{
+    phone: string;
+    label: string;
+  } | null>(null);
+  const [editingPhone, setEditingPhone] = useState<string | null>(null);
 
-  async function refresh() {
-    try {
-      const response = await apiFetch("/api/contacts");
-      const json = await response.json();
-      if (!json.ok) {
-        throw new Error(json.error || "Failed to load contacts");
-      }
-      const list = (json.contacts ?? []) as Contact[];
-      setContacts(list);
-      setDrafts(
-        Object.fromEntries(
-          list.map((contact) => [contact.phone, contact.customer_name ?? ""]),
-        ),
-      );
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "שגיאה בטעינה");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const {
+    data: contacts = [],
+    error,
+    isLoading,
+    isFetching,
+    refetch,
+  } = useQuery({
+    queryKey: queryKeys.contacts,
+    queryFn: fetchContacts,
+  });
 
-  useEffect(() => {
-    refresh();
-  }, []);
+  const baseDrafts = useMemo(
+    () =>
+      Object.fromEntries(
+        contacts.map((contact) => [
+          contact.phone,
+          contact.customer_name ?? "",
+        ]),
+      ),
+    [contacts],
+  );
+
+  const drafts = useMemo(
+    () => ({ ...baseDrafts, ...draftOverrides }),
+    [baseDrafts, draftOverrides],
+  );
+
+  const showSkeleton = isLoading && contacts.length === 0;
+  const loadError =
+    actionError ??
+    (error instanceof Error ? error.message : error ? "שגיאה בטעינה" : null);
 
   async function saveName(phone: string) {
     setSavingPhone(phone);
@@ -76,20 +93,22 @@ export default function ContactsPage() {
       if (!json.ok) {
         throw new Error(json.error || "Failed to save name");
       }
-      await refresh();
+      setEditingPhone(null);
+      setDraftOverrides((prev) => {
+        const next = { ...prev };
+        delete next[phone];
+        return next;
+      });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.contacts });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "שגיאה בשמירה");
+      setActionError(err instanceof Error ? err.message : "שגיאה בשמירה");
     } finally {
       setSavingPhone(null);
     }
   }
 
   async function deleteContact(phone: string) {
-    const confirmed = window.confirm(
-      `למחוק את איש הקשר ${phone}?\nהשיחה, ההודעות והקריאות המשויכות יימחקו.`,
-    );
-    if (!confirmed) return;
-
     setDeletingPhone(phone);
     try {
       const response = await apiFetch(
@@ -100,9 +119,12 @@ export default function ContactsPage() {
       if (!json.ok) {
         throw new Error(json.error || "Failed to delete contact");
       }
-      await refresh();
+      setPendingDelete(null);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.contacts });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
+      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "שגיאה במחיקה");
+      setActionError(err instanceof Error ? err.message : "שגיאה במחיקה");
     } finally {
       setDeletingPhone(null);
     }
@@ -111,95 +133,152 @@ export default function ContactsPage() {
   return (
     <DashboardShell
       title="אנשי קשר"
-      subtitle="שמות לקוחות לפי מספר טלפון — ריק = מספר בלבד"
+      subtitle="שמות לקוחות לפי מספר טלפון"
+      leading={<BackLink href="/dashboard/more" />}
       actions={
         <Button
           variant="outline"
-          className="min-h-11 shrink-0 px-4 active:scale-[0.98]"
-          onClick={() => refresh()}
+          size="sm"
+          disabled={isFetching}
+          onClick={() => refetch()}
         >
           רענון
         </Button>
       }
     >
-      {loading && (
-        <p className="text-sm text-muted-foreground">טוען אנשי קשר...</p>
+      {showSkeleton && (
+        <div className="space-y-3">
+          <Skeleton className="h-20 w-full rounded-2xl" />
+          <Skeleton className="h-20 w-full rounded-2xl" />
+        </div>
       )}
-      {error && (
-        <p className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          {error}
+      {loadError && (
+        <p className="mb-4 rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-base text-destructive">
+          {loadError}
         </p>
       )}
 
-      {!loading && contacts.length === 0 && !error && (
-        <p className="rounded-xl border border-dashed border-border bg-card/60 p-8 text-center text-muted-foreground">
-          עדיין אין אנשי קשר. שיחה בוואטסאפ יוצרת איש קשר אוטומטית.
-        </p>
+      {!showSkeleton && contacts.length === 0 && !loadError && (
+        <EmptyState
+          title="עדיין אין אנשי קשר"
+          description="שיחה בוואטסאפ יוצרת איש קשר אוטומטית."
+        />
       )}
 
-      <ul className="space-y-3">
-        {contacts.map((contact) => {
+      <ul className="space-y-2.5">
+        {contacts.map((contact: ContactItem) => {
           const draft = drafts[contact.phone] ?? "";
           const saved = contact.customer_name ?? "";
           const dirty = draft.trim() !== saved;
+          const displayName = contact.customer_name?.trim() || contact.phone;
+          const isEditing = editingPhone === contact.phone;
+
           return (
             <li
               key={contact.id}
-              className="rounded-xl border border-border bg-card p-4 shadow-[0_1px_0_oklch(0.84_0.015_75)]"
+              className="rounded-2xl border border-border bg-card p-4 shadow-sm"
             >
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="font-semibold tracking-wide" dir="ltr">
-                    {contact.phone}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    עדכון אחרון · {formatTime(contact.last_message_at)}
-                  </p>
+              <div className="flex items-start gap-3">
+                <Link
+                  href={`/dashboard/${encodeURIComponent(contact.phone)}`}
+                  className="flex min-w-0 flex-1 items-center gap-3"
+                >
+                  <AvatarInitials name={displayName} />
+                  <div className="min-w-0">
+                    <p className="truncate text-base font-semibold">
+                      {displayName}
+                    </p>
+                    <p
+                      className="text-sm tracking-wide text-muted-foreground"
+                      dir="ltr"
+                    >
+                      {contact.phone}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      עדכון אחרון · {formatTime(contact.last_message_at)}
+                    </p>
+                  </div>
+                </Link>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <CallButton phone={contact.phone} />
+                  <RowActions
+                    items={[
+                      {
+                        label: "ערוך שם",
+                        onSelect: () => setEditingPhone(contact.phone),
+                      },
+                      {
+                        label: "מחק",
+                        destructive: true,
+                        separatorBefore: true,
+                        onSelect: () =>
+                          setPendingDelete({
+                            phone: contact.phone,
+                            label: displayName,
+                          }),
+                      },
+                    ]}
+                  />
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Link
-                    href={`/dashboard/${encodeURIComponent(contact.phone)}`}
-                    className={cn(
-                      buttonVariants({ variant: "outline" }),
-                      "min-h-11 px-4 active:scale-[0.98]",
-                    )}
-                  >
-                    פתח שיחה
-                  </Link>
+              </div>
+
+              {isEditing && (
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Input
+                    value={draft}
+                    onChange={(event) =>
+                      setDraftOverrides((prev) => ({
+                        ...prev,
+                        [contact.phone]: event.target.value,
+                      }))
+                    }
+                    placeholder="שם לקוח (אופציונלי)"
+                  />
                   <Button
-                    variant="destructive"
-                    className="min-h-11 px-4 active:scale-[0.98]"
-                    disabled={deletingPhone === contact.phone}
-                    onClick={() => deleteContact(contact.phone)}
+                    disabled={!dirty || savingPhone === contact.phone}
+                    onClick={() => saveName(contact.phone)}
                   >
-                    {deletingPhone === contact.phone ? "מוחק..." : "מחק"}
+                    {savingPhone === contact.phone ? "שומר..." : "שמור"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setEditingPhone(null);
+                      setDraftOverrides((prev) => {
+                        const next = { ...prev };
+                        delete next[contact.phone];
+                        return next;
+                      });
+                    }}
+                  >
+                    ביטול
                   </Button>
                 </div>
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <input
-                  value={draft}
-                  onChange={(event) =>
-                    setDrafts((prev) => ({
-                      ...prev,
-                      [contact.phone]: event.target.value,
-                    }))
-                  }
-                  placeholder="שם לקוח (אופציונלי)"
-                  className="min-h-11 flex-1 rounded-xl border border-input bg-background px-3 text-base outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/40 sm:text-sm"
-                />
-                <Button
-                  className="min-h-11 px-5 active:scale-[0.98]"
-                  disabled={!dirty || savingPhone === contact.phone}
-                  onClick={() => saveName(contact.phone)}
-                >
-                  {savingPhone === contact.phone ? "שומר..." : "שמור"}
-                </Button>
-              </div>
+              )}
             </li>
           );
         })}
       </ul>
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title="מחיקת איש קשר"
+        description={
+          pendingDelete
+            ? `למחוק את איש הקשר ${pendingDelete.label}?\nהשיחה, ההודעות ובקשות העבודה המשויכות יימחקו.`
+            : ""
+        }
+        confirmLabel="מחק"
+        destructive
+        busy={Boolean(pendingDelete && deletingPhone === pendingDelete.phone)}
+        onConfirm={async () => {
+          if (!pendingDelete) return;
+          await deleteContact(pendingDelete.phone);
+        }}
+      />
     </DashboardShell>
   );
 }

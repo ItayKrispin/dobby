@@ -23,13 +23,13 @@ export function FieldInfo({ title, children, className }: FieldInfoProps) {
       <PopoverTrigger
         type="button"
         className={cn(
-          "inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+          "inline-flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
           className,
         )}
         aria-label={`מידע: ${title}`}
         onClick={(event) => event.stopPropagation()}
       >
-        <Info className="size-4" aria-hidden />
+        <Info className="size-5" aria-hidden />
       </PopoverTrigger>
       <PopoverContent
         align="start"

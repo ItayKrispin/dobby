@@ -7,23 +7,25 @@ export async function GET(request: NextRequest) {
 
   if (oauthError) {
     return NextResponse.redirect(
-      new URL(`/dashboard?gcal=error&reason=${oauthError}`, request.url),
+      new URL(`/dashboard/business?gcal=error&reason=${oauthError}`, request.url),
     );
   }
 
   if (!code) {
     return NextResponse.redirect(
-      new URL("/dashboard?gcal=error&reason=missing_code", request.url),
+      new URL("/dashboard/business?gcal=error&reason=missing_code", request.url),
     );
   }
 
   try {
     await handleGoogleOAuthCallback(code);
-    return NextResponse.redirect(new URL("/dashboard?gcal=connected", request.url));
+    return NextResponse.redirect(
+      new URL("/dashboard/business?gcal=connected", request.url),
+    );
   } catch (error) {
     console.error("Google OAuth callback error:", error);
     return NextResponse.redirect(
-      new URL("/dashboard?gcal=error&reason=callback_failed", request.url),
+      new URL("/dashboard/business?gcal=error&reason=callback_failed", request.url),
     );
   }
 }
